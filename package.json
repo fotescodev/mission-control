@@ -8,7 +8,8 @@
     "start": "next start",
     "lint": "next lint",
     "db:seed": "tsx src/lib/db/seed.ts",
-    "db:reset": "rm -f mission-control.db mission-control.db-* && npm run db:seed"
+    "db:reset": "rm -f mission-control.db mission-control.db-* && npm run db:seed",
+    "agent-runner": "tsx scripts/agent-runner.ts"
   },
   "dependencies": {
     "better-sqlite3": "^11.7.0",

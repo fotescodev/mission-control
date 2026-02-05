@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { X, Save, Trash2, Activity, Package, ClipboardList } from 'lucide-react';
+import { X, Save, Trash2, Activity, Package, ClipboardList, Zap, Loader2 } from 'lucide-react';
 import { useMissionControl } from '@/lib/store';
 import { ActivityLog } from './ActivityLog';
 import { DeliverablesList } from './DeliverablesList';
@@ -19,6 +19,8 @@ interface TaskModalProps {
 export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
   const { agents, addTask, updateTask, addEvent } = useMissionControl();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDispatching, setIsDispatching] = useState(false);
+  const [dispatchMessage, setDispatchMessage] = useState<string | null>(null);
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>(task?.status === 'planning' ? 'planning' : 'overview');
 
@@ -79,6 +81,35 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
       console.error('Failed to delete task:', error);
     }
   };
+
+  const handleDispatch = async () => {
+    if (!task) return;
+    setIsDispatching(true);
+    setDispatchMessage(null);
+    try {
+      const res = await fetch(`/api/tasks/${task.id}/dispatch`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: 'sonnet' }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setDispatchMessage(data.message);
+        // Update local state to reflect in_progress
+        updateTask({ ...task, status: 'in_progress' });
+        // Switch to activity tab to watch progress
+        setActiveTab('activity');
+      } else {
+        setDispatchMessage(`Error: ${data.error}`);
+      }
+    } catch {
+      setDispatchMessage('Error: Failed to dispatch task.');
+    } finally {
+      setIsDispatching(false);
+    }
+  };
+
+  const canDispatch = task && task.assigned_agent_id && task.status !== 'in_progress' && task.status !== 'done';
 
   const statuses: TaskStatus[] = ['planning', 'inbox', 'assigned', 'in_progress', 'testing', 'review', 'done'];
   const priorities: TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
@@ -173,13 +204,26 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
           {activeTab === 'deliverables' && task && <DeliverablesList taskId={task.id} />}
         </div>
 
+        {dispatchMessage && (
+          <div className={`mx-4 mb-0 p-3 rounded text-sm ${dispatchMessage.startsWith('Error') ? 'bg-mc-accent-red/10 text-mc-accent-red' : 'bg-mc-accent/10 text-mc-accent'}`}>
+            {dispatchMessage}
+          </div>
+        )}
+
         {activeTab === 'overview' && (
           <div className="flex items-center justify-between p-4 border-t border-mc-border flex-shrink-0">
-            <div>
+            <div className="flex items-center gap-2">
               {task && (
                 <button type="button" onClick={handleDelete}
                   className="flex items-center gap-2 px-3 py-2 text-mc-accent-red hover:bg-mc-accent-red/10 rounded text-sm">
                   <Trash2 className="w-4 h-4" /> Delete
+                </button>
+              )}
+              {canDispatch && (
+                <button type="button" onClick={handleDispatch} disabled={isDispatching}
+                  className="flex items-center gap-2 px-3 py-2 bg-mc-accent-green/20 text-mc-accent-green hover:bg-mc-accent-green/30 rounded text-sm font-medium disabled:opacity-50 transition-colors">
+                  {isDispatching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                  {isDispatching ? 'Dispatching...' : 'Dispatch to Claude'}
                 </button>
               )}
             </div>
