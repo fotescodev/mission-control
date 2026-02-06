@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import type { TaskActivity } from '@/lib/types';
+import { isNonEmptyString, badRequest } from '@/lib/validation';
 
 export async function GET(
   request: NextRequest,
@@ -46,8 +47,11 @@ export async function POST(
     const body = await request.json();
     const { activity_type, message, agent_id, metadata } = body;
 
-    if (!activity_type || !message) {
-      return NextResponse.json({ error: 'activity_type and message are required' }, { status: 400 });
+    if (!isNonEmptyString(activity_type)) {
+      return badRequest('activity_type is required and must be a non-empty string');
+    }
+    if (!isNonEmptyString(message)) {
+      return badRequest('message is required and must be a non-empty string');
     }
 
     const db = getDb();

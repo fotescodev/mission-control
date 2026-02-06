@@ -20,6 +20,7 @@ interface TaskModalProps {
 export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
   const { agents, addTask, updateTask, addEvent } = useMissionControl();
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>(task?.status === 'planning' ? 'planning' : 'overview');
 
@@ -34,6 +35,7 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     setIsSubmitting(true);
     try {
       const url = task ? `/api/tasks/${task.id}` : '/api/tasks';
@@ -60,9 +62,13 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
           });
         }
         onClose();
+      } else {
+        const data = await res.json();
+        setError(data.error || 'Failed to save task');
       }
     } catch (error) {
       console.error('Failed to save task:', error);
+      setError('Network error: Failed to save task.');
     } finally {
       setIsSubmitting(false);
     }
@@ -78,6 +84,7 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
       }
     } catch (error) {
       console.error('Failed to delete task:', error);
+      setError('Failed to delete task.');
     }
   };
 
@@ -108,7 +115,7 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
               <DispatchBadge mode={task.dispatch_mode} meta={dispatchMeta} />
             )}
           </div>
-          <button onClick={onClose} className="p-1 hover:bg-mc-bg-tertiary rounded"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} aria-label="Close" className="p-1 hover:bg-mc-bg-tertiary rounded"><X className="w-5 h-5" /></button>
         </div>
 
         {task && (
@@ -128,36 +135,36 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
           {activeTab === 'overview' && (
             <form onSubmit={handleSubmit} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium mb-1">Title</label>
-                <input type="text" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required
+                <label htmlFor="task-title" className="block text-sm font-medium mb-1">Title</label>
+                <input id="task-title" type="text" value={form.title} onChange={(e) => setForm({ ...form, title: e.target.value })} required
                   className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent"
                   placeholder="What needs to be done?" />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Description</label>
-                <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3}
+                <label htmlFor="task-description" className="block text-sm font-medium mb-1">Description</label>
+                <textarea id="task-description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={3}
                   className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent resize-none"
                   placeholder="Add details..." />
               </div>
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium mb-1">Status</label>
-                  <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as TaskStatus })}
+                  <label htmlFor="task-status" className="block text-sm font-medium mb-1">Status</label>
+                  <select id="task-status" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as TaskStatus })}
                     className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent">
                     {statuses.map((s) => <option key={s} value={s}>{s.replace('_', ' ').toUpperCase()}</option>)}
                   </select>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium mb-1">Priority</label>
-                  <select value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value as TaskPriority })}
+                  <label htmlFor="task-priority" className="block text-sm font-medium mb-1">Priority</label>
+                  <select id="task-priority" value={form.priority} onChange={(e) => setForm({ ...form, priority: e.target.value as TaskPriority })}
                     className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent">
                     {priorities.map((p) => <option key={p} value={p}>{p.toUpperCase()}</option>)}
                   </select>
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Assign to</label>
-                <select value={form.assigned_agent_id}
+                <label htmlFor="task-assigned-agent" className="block text-sm font-medium mb-1">Assign to</label>
+                <select id="task-assigned-agent" value={form.assigned_agent_id}
                   onChange={(e) => {
                     if (e.target.value === '__add_new__') setShowAgentModal(true);
                     else setForm({ ...form, assigned_agent_id: e.target.value });
@@ -169,8 +176,8 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Due Date</label>
-                <input type="datetime-local" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })}
+                <label htmlFor="task-due-date" className="block text-sm font-medium mb-1">Due Date</label>
+                <input id="task-due-date" type="datetime-local" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })}
                   className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent" />
               </div>
 
@@ -195,6 +202,8 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
           )}
           {activeTab === 'deliverables' && task && <DeliverablesList taskId={task.id} />}
         </div>
+
+        {error && <div className="mx-4 p-3 bg-mc-accent-red/10 text-mc-accent-red border border-mc-accent-red/20 rounded text-sm">{error}</div>}
 
         {activeTab === 'overview' && (
           <div className="flex items-center justify-between p-4 border-t border-mc-border flex-shrink-0">

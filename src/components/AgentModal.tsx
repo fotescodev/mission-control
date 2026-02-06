@@ -18,6 +18,7 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
   const { addAgent, updateAgent } = useMissionControl();
   const [activeTab, setActiveTab] = useState<'info' | 'soul' | 'user' | 'agents'>('info');
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const [form, setForm] = useState({
     name: agent?.name || '',
@@ -33,6 +34,7 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     setIsSubmitting(true);
     try {
       const url = agent ? `/api/agents/${agent.id}` : '/api/agents';
@@ -50,9 +52,13 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
           if (onAgentCreated) onAgentCreated(savedAgent.id);
         }
         onClose();
+      } else {
+        const data = await res.json();
+        setError(data.error || 'Failed to save agent');
       }
     } catch (error) {
       console.error('Failed to save agent:', error);
+      setError('Network error: Failed to save agent.');
     } finally {
       setIsSubmitting(false);
     }
@@ -71,6 +77,7 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
       }
     } catch (error) {
       console.error('Failed to delete agent:', error);
+      setError('Failed to delete agent.');
     }
   };
 
@@ -86,12 +93,12 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
       <div className="bg-mc-bg-secondary border border-mc-border rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between p-4 border-b border-mc-border">
           <h2 className="text-lg font-semibold">{agent ? `Edit ${agent.name}` : 'Create New Agent'}</h2>
-          <button onClick={onClose} className="p-1 hover:bg-mc-bg-tertiary rounded"><X className="w-5 h-5" /></button>
+          <button onClick={onClose} aria-label="Close" className="p-1 hover:bg-mc-bg-tertiary rounded"><X className="w-5 h-5" /></button>
         </div>
 
-        <div className="flex border-b border-mc-border">
+        <div className="flex border-b border-mc-border" role="tablist">
           {tabs.map((tab) => (
-            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+            <button key={tab.id} role="tab" aria-selected={activeTab === tab.id} onClick={() => setActiveTab(tab.id)}
               className={`px-4 py-2 text-sm font-medium border-b-2 transition-colors ${
                 activeTab === tab.id ? 'border-mc-accent text-mc-accent' : 'border-transparent text-mc-text-secondary hover:text-mc-text'
               }`}
@@ -104,32 +111,33 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
             <div className="space-y-4">
               <div>
                 <label className="block text-sm font-medium mb-2">Avatar</label>
-                <div className="flex flex-wrap gap-2">
+                <div className="flex flex-wrap gap-2" role="radiogroup" aria-label="Select avatar emoji">
                   {EMOJI_OPTIONS.map((emoji) => (
-                    <button key={emoji} type="button" onClick={() => setForm({ ...form, avatar_emoji: emoji })}
+                    <button key={emoji} type="button" role="radio" aria-checked={form.avatar_emoji === emoji} aria-label={`Avatar ${emoji}`}
+                      onClick={() => setForm({ ...form, avatar_emoji: emoji })}
                       className={`text-2xl p-2 rounded hover:bg-mc-bg-tertiary ${form.avatar_emoji === emoji ? 'bg-mc-accent/20 ring-2 ring-mc-accent' : ''}`}
                     >{emoji}</button>
                   ))}
                 </div>
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Name</label>
-                <input type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required
+                <label htmlFor="agent-name" className="block text-sm font-medium mb-1">Name</label>
+                <input id="agent-name" type="text" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} required
                   className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent" placeholder="Agent name" />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Role</label>
-                <input type="text" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} required
+                <label htmlFor="agent-role" className="block text-sm font-medium mb-1">Role</label>
+                <input id="agent-role" type="text" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })} required
                   className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent" placeholder="e.g., Code & Automation" />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Description</label>
-                <textarea value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2}
+                <label htmlFor="agent-description" className="block text-sm font-medium mb-1">Description</label>
+                <textarea id="agent-description" value={form.description} onChange={(e) => setForm({ ...form, description: e.target.value })} rows={2}
                   className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent resize-none" placeholder="What does this agent do?" />
               </div>
               <div>
-                <label className="block text-sm font-medium mb-1">Status</label>
-                <select value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as AgentStatus })}
+                <label htmlFor="agent-status" className="block text-sm font-medium mb-1">Status</label>
+                <select id="agent-status" value={form.status} onChange={(e) => setForm({ ...form, status: e.target.value as AgentStatus })}
                   className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent">
                   <option value="standby">Standby</option>
                   <option value="working">Working</option>
@@ -145,29 +153,31 @@ export function AgentModal({ agent, onClose, workspaceId, onAgentCreated }: Agen
           )}
           {activeTab === 'soul' && (
             <div>
-              <label className="block text-sm font-medium mb-2">SOUL.md - Agent Personality & Identity</label>
-              <textarea value={form.soul_md} onChange={(e) => setForm({ ...form, soul_md: e.target.value })} rows={15}
+              <label htmlFor="agent-soul-md" className="block text-sm font-medium mb-2">SOUL.md - Agent Personality & Identity</label>
+              <textarea id="agent-soul-md" value={form.soul_md} onChange={(e) => setForm({ ...form, soul_md: e.target.value })} rows={15}
                 className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-mc-accent resize-none"
                 placeholder="# Agent Name&#10;&#10;Define this agent's personality..." />
             </div>
           )}
           {activeTab === 'user' && (
             <div>
-              <label className="block text-sm font-medium mb-2">USER.md - Context About the Human</label>
-              <textarea value={form.user_md} onChange={(e) => setForm({ ...form, user_md: e.target.value })} rows={15}
+              <label htmlFor="agent-user-md" className="block text-sm font-medium mb-2">USER.md - Context About the Human</label>
+              <textarea id="agent-user-md" value={form.user_md} onChange={(e) => setForm({ ...form, user_md: e.target.value })} rows={15}
                 className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-mc-accent resize-none"
                 placeholder="# User Context&#10;&#10;Info about the human..." />
             </div>
           )}
           {activeTab === 'agents' && (
             <div>
-              <label className="block text-sm font-medium mb-2">AGENTS.md - Team Awareness</label>
-              <textarea value={form.agents_md} onChange={(e) => setForm({ ...form, agents_md: e.target.value })} rows={15}
+              <label htmlFor="agent-agents-md" className="block text-sm font-medium mb-2">AGENTS.md - Team Awareness</label>
+              <textarea id="agent-agents-md" value={form.agents_md} onChange={(e) => setForm({ ...form, agents_md: e.target.value })} rows={15}
                 className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-mc-accent resize-none"
                 placeholder="# Team Roster&#10;&#10;Info about other agents..." />
             </div>
           )}
         </form>
+
+        {error && <div className="mx-4 p-3 bg-mc-accent-red/10 text-mc-accent-red border border-mc-accent-red/20 rounded text-sm">{error}</div>}
 
         <div className="flex items-center justify-between p-4 border-t border-mc-border">
           <div>

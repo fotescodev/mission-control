@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import { broadcast } from '@/lib/events';
 import type { TaskDeliverable } from '@/lib/types';
+import { isNonEmptyString, isValidDeliverableType, badRequest } from '@/lib/validation';
 
 export async function GET(
   request: NextRequest,
@@ -29,8 +30,11 @@ export async function POST(
     const body = await request.json();
     const { deliverable_type, title, path, description } = body;
 
-    if (!deliverable_type || !title) {
-      return NextResponse.json({ error: 'deliverable_type and title are required' }, { status: 400 });
+    if (!isValidDeliverableType(deliverable_type)) {
+      return badRequest('Invalid or missing deliverable_type (must be file, url, or artifact)');
+    }
+    if (!isNonEmptyString(title)) {
+      return badRequest('Title is required and must be a non-empty string');
     }
 
     const db = getDb();

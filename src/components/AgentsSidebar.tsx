@@ -43,6 +43,7 @@ export function AgentsSidebar({ workspaceId }: AgentsSidebarProps) {
             <button
               key={tab}
               onClick={() => setFilter(tab)}
+              aria-pressed={filter === tab}
               className={`px-3 py-1 text-xs rounded uppercase ${
                 filter === tab ? 'bg-mc-accent text-mc-bg font-medium' : 'text-mc-text-secondary hover:bg-mc-bg-tertiary'
               }`}

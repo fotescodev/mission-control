@@ -115,9 +115,10 @@ interface TaskCardProps {
   isDragging: boolean;
 }
 
+const priorityStyles = { low: 'text-mc-text-secondary', normal: 'text-mc-accent', high: 'text-mc-accent-yellow', urgent: 'text-mc-accent-red' };
+const priorityDots = { low: 'bg-mc-text-secondary/40', normal: 'bg-mc-accent', high: 'bg-mc-accent-yellow', urgent: 'bg-mc-accent-red' };
+
 function TaskCard({ task, onDragStart, onClick, isDragging }: TaskCardProps) {
-  const priorityStyles = { low: 'text-mc-text-secondary', normal: 'text-mc-accent', high: 'text-mc-accent-yellow', urgent: 'text-mc-accent-red' };
-  const priorityDots = { low: 'bg-mc-text-secondary/40', normal: 'bg-mc-accent', high: 'bg-mc-accent-yellow', urgent: 'bg-mc-accent-red' };
   const isPlanning = task.status === 'planning';
   const isInProgress = task.status === 'in_progress';
   const isTeam = task.dispatch_mode === 'team';
@@ -173,8 +174,8 @@ function TaskCard({ task, onDragStart, onClick, isDragging }: TaskCardProps) {
         )}
         {task.assigned_agent && (
           <div className="flex items-center gap-2 mb-3 py-1.5 px-2 bg-mc-bg-tertiary/50 rounded">
-            <span className="text-base">{(task.assigned_agent as any).avatar_emoji}</span>
-            <span className="text-xs text-mc-text-secondary truncate">{(task.assigned_agent as any).name}</span>
+            <span className="text-base">{task.assigned_agent?.avatar_emoji}</span>
+            <span className="text-xs text-mc-text-secondary truncate">{task.assigned_agent?.name}</span>
           </div>
         )}
         <div className="flex items-center justify-between pt-2 border-t border-mc-border/20">

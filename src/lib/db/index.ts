@@ -58,3 +58,10 @@ export function run(sql: string, params: unknown[] = []): Database.RunResult {
   const stmt = getDb().prepare(sql);
   return stmt.run(...params);
 }
+
+/** Run multiple statements atomically. Rolls back on error. */
+export function transaction<T>(fn: () => T): T {
+  const db = getDb();
+  return db.transaction(fn)();
+}
+

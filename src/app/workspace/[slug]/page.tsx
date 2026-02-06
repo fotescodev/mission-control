@@ -10,7 +10,7 @@ import { MissionQueue } from '@/components/MissionQueue';
 import { LiveFeed } from '@/components/LiveFeed';
 import { useMissionControl } from '@/lib/store';
 import { useSSE } from '@/hooks/useSSE';
-import type { Task, Workspace } from '@/lib/types';
+import type { Workspace } from '@/lib/types';
 
 export default function WorkspacePage() {
   const params = useParams();
@@ -64,34 +64,6 @@ export default function WorkspacePage() {
 
     loadData();
     setIsOnline(true);
-
-    const eventPoll = setInterval(async () => {
-      try {
-        const res = await fetch('/api/events?limit=20');
-        if (res.ok) setEvents(await res.json());
-      } catch {}
-    }, 5000);
-
-    const taskPoll = setInterval(async () => {
-      try {
-        const res = await fetch(`/api/tasks?workspace_id=${workspaceId}`);
-        if (res.ok) {
-          const newTasks: Task[] = await res.json();
-          const currentTasks = useMissionControl.getState().tasks;
-          const hasChanges = newTasks.length !== currentTasks.length ||
-            newTasks.some((t) => {
-              const current = currentTasks.find(ct => ct.id === t.id);
-              return !current || current.status !== t.status;
-            });
-          if (hasChanges) setTasks(newTasks);
-        }
-      } catch {}
-    }, 10000);
-
-    return () => {
-      clearInterval(eventPoll);
-      clearInterval(taskPoll);
-    };
   }, [workspace, setAgents, setTasks, setEvents, setIsOnline, setIsLoading]);
 
   if (notFound) {

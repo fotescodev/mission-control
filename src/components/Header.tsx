@@ -32,7 +32,7 @@ export function Header({ workspace }: HeaderProps) {
         </div>
         {workspace ? (
           <div className="flex items-center gap-2">
-            <Link href="/" className="flex items-center gap-1 text-mc-text-secondary hover:text-mc-accent transition-colors">
+            <Link href="/" aria-label="Go to workspaces" className="flex items-center gap-1 text-mc-text-secondary hover:text-mc-accent transition-colors">
               <ChevronLeft className="w-4 h-4" />
               <LayoutGrid className="w-4 h-4" />
             </Link>

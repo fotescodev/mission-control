@@ -15,7 +15,6 @@ export interface ClaudeRunOptions {
   model?: string;
   maxTurns?: number;
   cwd?: string;
-  allowedTools?: string[];
   taskId: string;
   agentId: string;
   agentName: string;
@@ -52,6 +51,9 @@ export interface ClaudeStreamMessage {
   num_turns?: number;
   is_error?: boolean;
 }
+
+// Maximum number of concurrent Claude processes
+const MAX_CONCURRENT = 5;
 
 // Track active processes so they can be killed if needed
 const activeProcesses = new Map<string, ChildProcess>();
@@ -174,13 +176,17 @@ export async function runClaudeCode(options: ClaudeRunOptions): Promise<{
     model = 'sonnet',
     maxTurns = 25,
     cwd = process.cwd(),
-    allowedTools,
     taskId,
     agentId,
     agentName,
     useTeam = false,
     teammates = [],
   } = options;
+
+  // Enforce concurrency limit
+  if (activeProcesses.size >= MAX_CONCURRENT) {
+    throw new Error(`Concurrency limit reached (${MAX_CONCURRENT} processes). Try again later.`);
+  }
 
   const dispatchMode = useTeam ? 'team' : 'solo';
 
@@ -201,10 +207,6 @@ export async function runClaudeCode(options: ClaudeRunOptions): Promise<{
 
   if (systemPrompt) {
     args.push('--append-system-prompt', systemPrompt);
-  }
-
-  if (allowedTools && allowedTools.length > 0) {
-    args.push('--allowed-tools', ...allowedTools);
   }
 
   // The prompt goes last as positional arg
@@ -265,6 +267,21 @@ export async function runClaudeCode(options: ClaudeRunOptions): Promise<{
     });
 
     activeProcesses.set(taskId, proc);
+
+    // Set a timeout to kill runaway processes (1 min per turn estimate)
+    const effectiveMaxTurns = useTeam ? maxTurns * 2 : maxTurns;
+    const timeoutMs = effectiveMaxTurns * 60 * 1000;
+    const processTimeout = setTimeout(() => {
+      console.error(`[Claude Runner] Process for task ${taskId} timed out after ${timeoutMs}ms — killing`);
+      logActivity(taskId, agentId, 'status_changed', `Process killed: exceeded ${effectiveMaxTurns} minute timeout`);
+      proc.kill('SIGTERM');
+      // Force kill after 10 seconds if SIGTERM doesn't work
+      setTimeout(() => {
+        if (!proc.killed) {
+          proc.kill('SIGKILL');
+        }
+      }, 10_000);
+    }, timeoutMs);
 
     let resultText = '';
     let lastActivityText = '';
@@ -375,6 +392,7 @@ export async function runClaudeCode(options: ClaudeRunOptions): Promise<{
     });
 
     proc.on('close', async (code) => {
+      clearTimeout(processTimeout);
       activeProcesses.delete(taskId);
 
       // Update lead agent back to standby
@@ -414,6 +432,7 @@ export async function runClaudeCode(options: ClaudeRunOptions): Promise<{
     });
 
     proc.on('error', async (error) => {
+      clearTimeout(processTimeout);
       activeProcesses.delete(taskId);
       await updateAgentStatus(agentId, 'standby');
       if (useTeam) {

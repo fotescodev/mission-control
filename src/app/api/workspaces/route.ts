@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/lib/db';
 import type { Workspace, WorkspaceStats, TaskStatus } from '@/lib/types';
+import { isNonEmptyString, badRequest, conflict, created } from '@/lib/validation';
 
 function generateSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
@@ -52,24 +53,26 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { name, description, icon } = body;
 
-    if (!name || typeof name !== 'string' || name.trim().length === 0) {
-      return NextResponse.json({ error: 'Name is required' }, { status: 400 });
+    if (!isNonEmptyString(name)) {
+      return badRequest('Name is required and must be a non-empty string');
     }
 
     const db = getDb();
     const id = crypto.randomUUID();
     const slug = generateSlug(name);
 
-    const existing = db.prepare('SELECT id FROM workspaces WHERE slug = ?').get(slug);
-    if (existing) {
-      return NextResponse.json({ error: 'A workspace with this name already exists' }, { status: 400 });
+    try {
+      db.prepare(`INSERT INTO workspaces (id, name, slug, description, icon) VALUES (?, ?, ?, ?, ?)`)
+        .run(id, name.trim(), slug, description || null, icon || '📁');
+    } catch (err: any) {
+      if (err?.code === 'SQLITE_CONSTRAINT_UNIQUE' || err?.message?.includes('UNIQUE constraint failed')) {
+        return conflict('A workspace with this name already exists');
+      }
+      throw err;
     }
 
-    db.prepare(`INSERT INTO workspaces (id, name, slug, description, icon) VALUES (?, ?, ?, ?, ?)`)
-      .run(id, name.trim(), slug, description || null, icon || '📁');
-
     const workspace = db.prepare('SELECT * FROM workspaces WHERE id = ?').get(id);
-    return NextResponse.json(workspace, { status: 201 });
+    return created(workspace);
   } catch (error) {
     console.error('Failed to create workspace:', error);
     return NextResponse.json({ error: 'Failed to create workspace' }, { status: 500 });

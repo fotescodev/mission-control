@@ -36,6 +36,13 @@ export interface Agent {
   updated_at: string;
 }
 
+/** Lightweight agent reference attached to tasks/events via SQL JOINs */
+export interface AgentSummary {
+  id: string;
+  name: string;
+  avatar_emoji: string;
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -56,8 +63,8 @@ export interface Task {
   dispatch_metadata?: string;   // JSON string of DispatchConfig + runtime info
   created_at: string;
   updated_at: string;
-  assigned_agent?: Partial<Agent>;
-  created_by_agent?: Partial<Agent>;
+  assigned_agent?: AgentSummary;
+  created_by_agent?: AgentSummary;
 }
 
 export interface Conversation {
@@ -205,6 +212,8 @@ export interface CreateTaskRequest {
 
 export interface UpdateTaskRequest extends Partial<CreateTaskRequest> {
   status?: TaskStatus;
+  dispatch_mode?: DispatchMode;
+  dispatch_metadata?: string;
 }
 
 export type SSEEventType =

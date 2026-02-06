@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { queryOne, queryAll } from '@/lib/db';
+import { run, queryOne, queryAll, transaction } from '@/lib/db';
 import { runClaudeCode } from '@/lib/claude-code/runner';
+import { isValidCwd, isValidModel, isStringArray, isValidId, badRequest, conflict } from '@/lib/validation';
 import type { Task, Agent } from '@/lib/types';
 
 export async function POST(
@@ -16,10 +17,27 @@ export async function POST(
       model = 'sonnet',
       maxTurns = 25,
       cwd,
-      allowedTools,
       useTeam = false,
       teammateIds = [],   // agent IDs for team mode
     } = body;
+
+    // Validate model
+    if (!isValidModel(model)) {
+      return badRequest('Invalid model. Allowed: haiku, sonnet, opus');
+    }
+
+    // Validate cwd if provided
+    if (cwd !== undefined && !isValidCwd(cwd)) {
+      return badRequest('Invalid cwd. Must be an absolute path without traversal into sensitive directories.');
+    }
+
+    // Validate teammateIds
+    if (!isStringArray(teammateIds, 10)) {
+      return badRequest('teammateIds must be an array of strings with at most 10 entries');
+    }
+    if (teammateIds.length > 0 && !teammateIds.every((id: string) => isValidId(id))) {
+      return badRequest('One or more teammate IDs have invalid format');
+    }
 
     // Fetch the task
     const task = queryOne<Task>(
@@ -32,21 +50,10 @@ export async function POST(
 
     // Task must have an assigned agent (team lead for team mode)
     if (!task.assigned_agent_id) {
-      return NextResponse.json(
-        { error: 'Task has no assigned agent. Assign an agent before dispatching.' },
-        { status: 400 }
-      );
+      return badRequest('Task has no assigned agent. Assign an agent before dispatching.');
     }
 
-    // Don't dispatch tasks already in progress
-    if (task.status === 'in_progress') {
-      return NextResponse.json(
-        { error: 'Task is already in progress.' },
-        { status: 409 }
-      );
-    }
-
-    // Fetch the assigned agent (team lead)
+    // Fetch the assigned agent (team lead) — needed for name/role before claiming
     const agent = queryOne<Agent>(
       'SELECT * FROM agents WHERE id = ?',
       [task.assigned_agent_id]
@@ -55,15 +62,7 @@ export async function POST(
       return NextResponse.json({ error: 'Assigned agent not found' }, { status: 404 });
     }
 
-    // Don't dispatch if lead agent is already working
-    if (agent.status === 'working') {
-      return NextResponse.json(
-        { error: `${agent.name} is already working on another task.` },
-        { status: 409 }
-      );
-    }
-
-    // Resolve teammates for team mode
+    // Resolve teammates for team mode (validate existence + build list before claiming)
     let teammates: Array<{ id: string; name: string; role: string; description?: string }> = [];
     if (useTeam && teammateIds.length > 0) {
       const placeholders = teammateIds.map(() => '?').join(',');
@@ -71,21 +70,67 @@ export async function POST(
         `SELECT * FROM agents WHERE id IN (${placeholders})`,
         teammateIds
       );
+      // Verify all requested teammate IDs actually exist
+      if (teamAgents.length !== teammateIds.length) {
+        return badRequest('One or more teammate IDs are invalid');
+      }
       teammates = teamAgents.map(a => ({
         id: a.id,
         name: a.name,
         role: a.role,
         description: a.description,
       }));
+    }
 
-      // Check that no teammate is already working
-      const busyTeammates = teamAgents.filter(a => a.status === 'working');
-      if (busyTeammates.length > 0) {
-        return NextResponse.json(
-          { error: `${busyTeammates.map(a => a.name).join(', ')} ${busyTeammates.length > 1 ? 'are' : 'is'} already working.` },
-          { status: 409 }
+    // Atomic: claim the task + agent in one transaction to prevent race conditions
+    const now = new Date().toISOString();
+    let claimError: string | null = null;
+    try {
+      transaction(() => {
+        const taskClaim = run(
+          `UPDATE tasks SET status = 'in_progress', updated_at = ? WHERE id = ? AND status != 'in_progress' AND status != 'done'`,
+          [now, id]
         );
+        if (!taskClaim.changes) {
+          throw new Error('TASK_UNAVAILABLE');
+        }
+
+        const agentClaim = run(
+          `UPDATE agents SET status = 'working', updated_at = ? WHERE id = ? AND status = 'standby'`,
+          [now, task.assigned_agent_id]
+        );
+        if (!agentClaim.changes) {
+          throw new Error('AGENT_BUSY');
+        }
+
+        // If team mode, claim all teammates atomically too
+        if (useTeam && teammateIds.length > 0) {
+          for (const teammateId of teammateIds) {
+            const teammateClaim = run(
+              `UPDATE agents SET status = 'working', updated_at = ? WHERE id = ? AND status = 'standby'`,
+              [now, teammateId]
+            );
+            if (!teammateClaim.changes) {
+              throw new Error('TEAMMATE_BUSY');
+            }
+          }
+        }
+      });
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      if (msg === 'TASK_UNAVAILABLE') {
+        claimError = 'Task is already in progress or completed.';
+      } else if (msg === 'AGENT_BUSY') {
+        claimError = `${agent.name} is already working on another task.`;
+      } else if (msg === 'TEAMMATE_BUSY') {
+        claimError = 'One or more teammates are already working.';
+      } else {
+        throw err; // unexpected error, rethrow
       }
+    }
+
+    if (claimError) {
+      return conflict(claimError);
     }
 
     // Build the prompt from task details
@@ -120,7 +165,6 @@ export async function POST(
       model,
       maxTurns,
       cwd: cwd || process.cwd(),
-      allowedTools,
       taskId: id,
       agentId: agent.id,
       agentName: agent.name,
