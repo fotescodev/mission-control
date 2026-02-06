@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { queryOne } from '@/lib/db';
+import { queryOne, queryAll } from '@/lib/db';
 import { runClaudeCode } from '@/lib/claude-code/runner';
 import type { Task, Agent } from '@/lib/types';
 
@@ -17,6 +17,8 @@ export async function POST(
       maxTurns = 25,
       cwd,
       allowedTools,
+      useTeam = false,
+      teammateIds = [],   // agent IDs for team mode
     } = body;
 
     // Fetch the task
@@ -28,7 +30,7 @@ export async function POST(
       return NextResponse.json({ error: 'Task not found' }, { status: 404 });
     }
 
-    // Task must have an assigned agent
+    // Task must have an assigned agent (team lead for team mode)
     if (!task.assigned_agent_id) {
       return NextResponse.json(
         { error: 'Task has no assigned agent. Assign an agent before dispatching.' },
@@ -44,7 +46,7 @@ export async function POST(
       );
     }
 
-    // Fetch the assigned agent
+    // Fetch the assigned agent (team lead)
     const agent = queryOne<Agent>(
       'SELECT * FROM agents WHERE id = ?',
       [task.assigned_agent_id]
@@ -53,12 +55,37 @@ export async function POST(
       return NextResponse.json({ error: 'Assigned agent not found' }, { status: 404 });
     }
 
-    // Don't dispatch if agent is already working
+    // Don't dispatch if lead agent is already working
     if (agent.status === 'working') {
       return NextResponse.json(
         { error: `${agent.name} is already working on another task.` },
         { status: 409 }
       );
+    }
+
+    // Resolve teammates for team mode
+    let teammates: Array<{ id: string; name: string; role: string; description?: string }> = [];
+    if (useTeam && teammateIds.length > 0) {
+      const placeholders = teammateIds.map(() => '?').join(',');
+      const teamAgents = queryAll<Agent>(
+        `SELECT * FROM agents WHERE id IN (${placeholders})`,
+        teammateIds
+      );
+      teammates = teamAgents.map(a => ({
+        id: a.id,
+        name: a.name,
+        role: a.role,
+        description: a.description,
+      }));
+
+      // Check that no teammate is already working
+      const busyTeammates = teamAgents.filter(a => a.status === 'working');
+      if (busyTeammates.length > 0) {
+        return NextResponse.json(
+          { error: `${busyTeammates.map(a => a.name).join(', ')} ${busyTeammates.length > 1 ? 'are' : 'is'} already working.` },
+          { status: 409 }
+        );
+      }
     }
 
     // Build the prompt from task details
@@ -97,16 +124,25 @@ export async function POST(
       taskId: id,
       agentId: agent.id,
       agentName: agent.name,
+      useTeam,
+      teammates,
     }).catch((error) => {
       console.error(`[Dispatch] Claude Code failed for task ${id}:`, error);
     });
 
-    // Return immediately — the task will be updated asynchronously
+    // Build response
+    const modeLabel = useTeam ? 'Agent Team' : 'Claude Code';
+    const teamInfo = useTeam && teammates.length > 0
+      ? ` Team: ${agent.name} (lead) + ${teammates.map(t => t.name).join(', ')}.`
+      : '';
+
     return NextResponse.json({
       success: true,
-      message: `${agent.name} has been dispatched to work on "${task.title}" using Claude Code (${model}).`,
+      message: `${agent.name} has been dispatched to work on "${task.title}" using ${modeLabel} (${model}).${teamInfo}`,
       taskId: id,
       agentId: agent.id,
+      mode: useTeam ? 'team' : 'solo',
+      teammates: useTeam ? teammates.map(t => ({ id: t.id, name: t.name })) : undefined,
     });
   } catch (error) {
     console.error('Failed to dispatch task:', error);

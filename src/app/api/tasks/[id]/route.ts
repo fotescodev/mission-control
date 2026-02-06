@@ -42,6 +42,8 @@ export async function PATCH(
     if (body.description !== undefined) { updates.push('description = ?'); values.push(body.description); }
     if (body.priority !== undefined) { updates.push('priority = ?'); values.push(body.priority); }
     if (body.due_date !== undefined) { updates.push('due_date = ?'); values.push(body.due_date); }
+    if ((body as any).dispatch_mode !== undefined) { updates.push('dispatch_mode = ?'); values.push((body as any).dispatch_mode); }
+    if ((body as any).dispatch_metadata !== undefined) { updates.push('dispatch_metadata = ?'); values.push((body as any).dispatch_metadata); }
 
     if (body.status !== undefined && body.status !== existing.status) {
       updates.push('status = ?');

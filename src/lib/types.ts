@@ -52,6 +52,8 @@ export interface Task {
   planning_complete?: number;
   planning_spec?: string;
   planning_agents?: string;
+  dispatch_mode?: DispatchMode;
+  dispatch_metadata?: string;   // JSON string of DispatchConfig + runtime info
   created_at: string;
   updated_at: string;
   assigned_agent?: Partial<Agent>;
@@ -120,7 +122,18 @@ export interface WorkspaceStats {
   agentCount: number;
 }
 
-export type ActivityType = 'spawned' | 'updated' | 'completed' | 'file_created' | 'status_changed';
+export type DispatchMode = 'solo' | 'team';
+
+export interface DispatchConfig {
+  mode: DispatchMode;
+  model: string;
+  maxTurns?: number;
+  cwd?: string;
+  teammates?: string[];        // agent IDs for team mode
+  teammateRoles?: Record<string, string>;  // agentId -> role description override
+}
+
+export type ActivityType = 'spawned' | 'updated' | 'completed' | 'file_created' | 'status_changed' | 'team_formed' | 'teammate_joined' | 'teammate_message';
 
 export interface TaskActivity {
   id: string;

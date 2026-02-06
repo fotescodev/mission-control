@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS tasks (
   planning_complete INTEGER DEFAULT 0,
   planning_spec TEXT,
   planning_agents TEXT,
+  dispatch_mode TEXT DEFAULT NULL,
+  dispatch_metadata TEXT DEFAULT NULL,
   created_at TEXT DEFAULT (datetime('now')),
   updated_at TEXT DEFAULT (datetime('now'))
 );

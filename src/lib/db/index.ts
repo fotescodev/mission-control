@@ -24,6 +24,15 @@ export function getDb(): Database.Database {
 
       console.log('[DB] New database created at:', DB_PATH);
     }
+
+    // Migrations for existing databases
+    const cols = db.prepare("PRAGMA table_info(tasks)").all() as { name: string }[];
+    const colNames = cols.map(c => c.name);
+    if (!colNames.includes('dispatch_mode')) {
+      db.exec('ALTER TABLE tasks ADD COLUMN dispatch_mode TEXT DEFAULT NULL');
+      db.exec('ALTER TABLE tasks ADD COLUMN dispatch_metadata TEXT DEFAULT NULL');
+      console.log('[DB] Migrated: added dispatch_mode, dispatch_metadata to tasks');
+    }
   }
   return db;
 }

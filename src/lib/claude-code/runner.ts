@@ -2,6 +2,7 @@
  * Claude Code Runner
  *
  * Spawns Claude Code CLI as a subprocess to execute tasks.
+ * Supports both solo mode (single agent) and team mode (Agent Teams).
  * Streams output back as task activities in real-time.
  */
 
@@ -18,6 +19,14 @@ export interface ClaudeRunOptions {
   taskId: string;
   agentId: string;
   agentName: string;
+  // Team mode options
+  useTeam?: boolean;
+  teammates?: Array<{
+    id: string;
+    name: string;
+    role: string;
+    description?: string;
+  }>;
 }
 
 export interface ClaudeStreamMessage {
@@ -54,13 +63,13 @@ export function getActiveProcesses(): Map<string, ChildProcess> {
 /**
  * Log an activity to Mission Control
  */
-async function logActivity(taskId: string, agentId: string, activityType: string, message: string) {
+async function logActivity(taskId: string, agentId: string, activityType: string, message: string, metadata?: Record<string, unknown>) {
   const mcUrl = getMissionControlUrl();
   try {
     await fetch(`${mcUrl}/api/tasks/${taskId}/activities`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ activity_type: activityType, message, agent_id: agentId }),
+      body: JSON.stringify({ activity_type: activityType, message, agent_id: agentId, metadata }),
     });
   } catch (error) {
     console.error('[Claude Runner] Failed to log activity:', error);
@@ -100,7 +109,55 @@ async function updateAgentStatus(agentId: string, status: string) {
 }
 
 /**
+ * Update dispatch metadata on the task
+ */
+async function updateDispatchMetadata(taskId: string, mode: string, metadata: Record<string, unknown>) {
+  const mcUrl = getMissionControlUrl();
+  try {
+    await fetch(`${mcUrl}/api/tasks/${taskId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        dispatch_mode: mode,
+        dispatch_metadata: JSON.stringify(metadata),
+      }),
+    });
+  } catch (error) {
+    console.error('[Claude Runner] Failed to update dispatch metadata:', error);
+  }
+}
+
+/**
+ * Build a team-oriented prompt that instructs Claude to create an Agent Team
+ */
+function buildTeamPrompt(options: ClaudeRunOptions): string {
+  const { prompt, teammates = [] } = options;
+
+  let teamPrompt = `Create an agent team to work on the following task.\n\n`;
+  teamPrompt += `# Task\n${prompt}\n\n`;
+
+  if (teammates.length > 0) {
+    teamPrompt += `# Team Structure\nSpawn ${teammates.length} teammate${teammates.length > 1 ? 's' : ''}:\n`;
+    teammates.forEach((t, i) => {
+      teamPrompt += `${i + 1}. **${t.name}** (${t.role})`;
+      if (t.description) teamPrompt += ` — ${t.description}`;
+      teamPrompt += '\n';
+    });
+    teamPrompt += '\n';
+  }
+
+  teamPrompt += `# Coordination\n`;
+  teamPrompt += `- Break the task into subtasks and assign to teammates\n`;
+  teamPrompt += `- Have teammates share findings and challenge each other's approaches\n`;
+  teamPrompt += `- Synthesize results when all teammates finish\n`;
+  teamPrompt += `- Use delegate mode — focus on coordination, not implementation\n`;
+
+  return teamPrompt;
+}
+
+/**
  * Run Claude Code CLI for a task.
+ * Supports solo (single agent) and team (Agent Teams) modes.
  * Spawns the process, streams output, logs activities.
  * Returns a promise that resolves when Claude finishes.
  */
@@ -121,14 +178,23 @@ export async function runClaudeCode(options: ClaudeRunOptions): Promise<{
     taskId,
     agentId,
     agentName,
+    useTeam = false,
+    teammates = [],
   } = options;
+
+  const dispatchMode = useTeam ? 'team' : 'solo';
+
+  // Build the actual prompt (team or solo)
+  const actualPrompt = useTeam
+    ? buildTeamPrompt(options)
+    : prompt;
 
   // Build CLI arguments
   const args: string[] = [
     '-p',                         // Non-interactive print mode
     '--output-format', 'stream-json',  // Stream JSON for real-time parsing
     '--model', model,
-    '--max-turns', String(maxTurns),
+    '--max-turns', String(useTeam ? maxTurns * 2 : maxTurns), // Teams need more turns
     '--dangerously-skip-permissions',  // Skip permission prompts in automated mode
     '--no-session-persistence',        // Don't persist session to disk
   ];
@@ -142,22 +208,59 @@ export async function runClaudeCode(options: ClaudeRunOptions): Promise<{
   }
 
   // The prompt goes last as positional arg
-  args.push(prompt);
+  args.push(actualPrompt);
 
-  console.log(`[Claude Runner] Starting Claude Code for task ${taskId}`);
-  console.log(`[Claude Runner] Agent: ${agentName} (${agentId})`);
-  console.log(`[Claude Runner] Model: ${model}, Max turns: ${maxTurns}`);
+  // Prepare env — enable Agent Teams if team mode
+  const env = { ...process.env };
+  if (useTeam) {
+    env.CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS = '1';
+  }
+
+  const modeLabel = useTeam ? 'Team' : 'Solo';
+  console.log(`[Claude Runner] Starting Claude Code (${modeLabel}) for task ${taskId}`);
+  console.log(`[Claude Runner] Lead Agent: ${agentName} (${agentId})`);
+  if (useTeam && teammates.length > 0) {
+    console.log(`[Claude Runner] Teammates: ${teammates.map(t => t.name).join(', ')}`);
+  }
+  console.log(`[Claude Runner] Model: ${model}, Max turns: ${useTeam ? maxTurns * 2 : maxTurns}`);
   console.log(`[Claude Runner] CWD: ${cwd}`);
 
   // Update statuses
   await updateAgentStatus(agentId, 'working');
   await updateTaskStatus(taskId, 'in_progress');
-  await logActivity(taskId, agentId, 'spawned', `${agentName} started working on this task using Claude Code (${model})`);
+
+  // Store dispatch metadata
+  await updateDispatchMetadata(taskId, dispatchMode, {
+    model,
+    maxTurns,
+    leadAgent: { id: agentId, name: agentName },
+    teammates: useTeam ? teammates : undefined,
+    startedAt: new Date().toISOString(),
+  });
+
+  if (useTeam) {
+    // Log team formation
+    await logActivity(taskId, agentId, 'team_formed',
+      `${agentName} is forming an Agent Team with ${teammates.length} teammate${teammates.length !== 1 ? 's' : ''}: ${teammates.map(t => t.name).join(', ')}`,
+      { teammates: teammates.map(t => ({ id: t.id, name: t.name, role: t.role })) }
+    );
+    // Set all teammates to working
+    for (const t of teammates) {
+      await updateAgentStatus(t.id, 'working');
+      await logActivity(taskId, t.id, 'teammate_joined',
+        `${t.name} joined the team as ${t.role}`
+      );
+    }
+  } else {
+    await logActivity(taskId, agentId, 'spawned',
+      `${agentName} started working on this task using Claude Code (${model})`
+    );
+  }
 
   return new Promise((resolve) => {
     const proc = spawn('claude', args, {
       cwd,
-      env: { ...process.env },
+      env,
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
@@ -195,7 +298,17 @@ export async function runClaudeCode(options: ClaudeRunOptions): Promise<{
                   const activityMsg = trimmed.length > 500
                     ? trimmed.substring(0, 500) + '...'
                     : trimmed;
-                  logActivity(taskId, agentId, 'updated', activityMsg);
+
+                  // Detect team-related messages
+                  const isTeamMsg = useTeam && (
+                    trimmed.includes('teammate') ||
+                    trimmed.includes('Spawning') ||
+                    trimmed.includes('team')
+                  );
+                  logActivity(taskId, agentId,
+                    isTeamMsg ? 'teammate_message' : 'updated',
+                    activityMsg
+                  );
                 }
               }
 
@@ -203,6 +316,8 @@ export async function runClaudeCode(options: ClaudeRunOptions): Promise<{
                 // Log tool usage as activity
                 const toolInput = block.input || {};
                 let toolMsg = `Using tool: ${block.name}`;
+
+                // Tool-specific formatting
                 if (block.name === 'Edit' && toolInput.file_path) {
                   toolMsg = `Editing file: ${toolInput.file_path}`;
                 } else if (block.name === 'Write' && toolInput.file_path) {
@@ -214,7 +329,22 @@ export async function runClaudeCode(options: ClaudeRunOptions): Promise<{
                   toolMsg = `Running: ${cmd.length > 100 ? cmd.substring(0, 100) + '...' : cmd}`;
                 } else if (block.name === 'Grep' && toolInput.pattern) {
                   toolMsg = `Searching for: ${toolInput.pattern}`;
+                } else if (block.name === 'Task' && toolInput.prompt) {
+                  // Subagent or teammate spawn
+                  const desc = String(toolInput.description || toolInput.prompt).substring(0, 100);
+                  toolMsg = useTeam
+                    ? `Team action: ${desc}`
+                    : `Subagent: ${desc}`;
+                } else if (block.name === 'spawnTeam' || block.name === 'TeammateTool') {
+                  toolMsg = `Agent Team: ${block.name}`;
+                  if (toolInput.prompt) {
+                    toolMsg += ` — ${String(toolInput.prompt).substring(0, 100)}`;
+                  }
+                } else if (block.name === 'SendMessage') {
+                  const to = toolInput.to || 'teammate';
+                  toolMsg = `Message to ${to}: ${String(toolInput.message || '').substring(0, 100)}`;
                 }
+
                 logActivity(taskId, agentId, 'updated', toolMsg);
               }
             }
@@ -247,12 +377,29 @@ export async function runClaudeCode(options: ClaudeRunOptions): Promise<{
     proc.on('close', async (code) => {
       activeProcesses.delete(taskId);
 
-      // Update agent back to standby
+      // Update lead agent back to standby
       await updateAgentStatus(agentId, 'standby');
+
+      // If team mode, also set teammates back to standby
+      if (useTeam) {
+        for (const t of teammates) {
+          await updateAgentStatus(t.id, 'standby');
+        }
+      }
 
       if (code === 0) {
         // Move task to review status
         await updateTaskStatus(taskId, 'review');
+        // Update dispatch metadata with completion info
+        await updateDispatchMetadata(taskId, dispatchMode, {
+          model,
+          maxTurns,
+          leadAgent: { id: agentId, name: agentName },
+          teammates: useTeam ? teammates : undefined,
+          startedAt: new Date().toISOString(),
+          completedAt: new Date().toISOString(),
+          status: 'completed',
+        });
         resolve({
           success: true,
           result: resultText,
@@ -269,6 +416,11 @@ export async function runClaudeCode(options: ClaudeRunOptions): Promise<{
     proc.on('error', async (error) => {
       activeProcesses.delete(taskId);
       await updateAgentStatus(agentId, 'standby');
+      if (useTeam) {
+        for (const t of teammates) {
+          await updateAgentStatus(t.id, 'standby');
+        }
+      }
       await logActivity(taskId, agentId, 'status_changed', `Failed to start Claude Code: ${error.message}`);
       resolve({
         success: false,

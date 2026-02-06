@@ -1,11 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import { X, Save, Trash2, Activity, Package, ClipboardList, Zap, Loader2 } from 'lucide-react';
+import { X, Save, Trash2, Activity, Package, ClipboardList, Zap, Users } from 'lucide-react';
 import { useMissionControl } from '@/lib/store';
 import { ActivityLog } from './ActivityLog';
 import { DeliverablesList } from './DeliverablesList';
 import { AgentModal } from './AgentModal';
+import { DispatchPanel } from './DispatchPanel';
 import type { Task, TaskPriority, TaskStatus } from '@/lib/types';
 
 type TabType = 'overview' | 'planning' | 'activity' | 'deliverables';
@@ -19,8 +20,6 @@ interface TaskModalProps {
 export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
   const { agents, addTask, updateTask, addEvent } = useMissionControl();
   const [isSubmitting, setIsSubmitting] = useState(false);
-  const [isDispatching, setIsDispatching] = useState(false);
-  const [dispatchMessage, setDispatchMessage] = useState<string | null>(null);
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [activeTab, setActiveTab] = useState<TabType>(task?.status === 'planning' ? 'planning' : 'overview');
 
@@ -82,37 +81,15 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
     }
   };
 
-  const handleDispatch = async () => {
-    if (!task) return;
-    setIsDispatching(true);
-    setDispatchMessage(null);
-    try {
-      const res = await fetch(`/api/tasks/${task.id}/dispatch`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ model: 'sonnet' }),
-      });
-      const data = await res.json();
-      if (res.ok) {
-        setDispatchMessage(data.message);
-        // Update local state to reflect in_progress
-        updateTask({ ...task, status: 'in_progress' });
-        // Switch to activity tab to watch progress
-        setActiveTab('activity');
-      } else {
-        setDispatchMessage(`Error: ${data.error}`);
-      }
-    } catch {
-      setDispatchMessage('Error: Failed to dispatch task.');
-    } finally {
-      setIsDispatching(false);
-    }
-  };
-
   const canDispatch = task && task.assigned_agent_id && task.status !== 'in_progress' && task.status !== 'done';
 
   const statuses: TaskStatus[] = ['planning', 'inbox', 'assigned', 'in_progress', 'testing', 'review', 'done'];
   const priorities: TaskPriority[] = ['low', 'normal', 'high', 'urgent'];
+
+  // Parse dispatch metadata if available
+  const dispatchMeta = task?.dispatch_metadata ? (() => {
+    try { return JSON.parse(task.dispatch_metadata); } catch { return null; }
+  })() : null;
 
   const tabs = [
     { id: 'overview' as TabType, label: 'Overview', icon: null },
@@ -125,7 +102,12 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
       <div className="bg-mc-bg-secondary border border-mc-border rounded-lg w-full max-w-2xl max-h-[90vh] flex flex-col">
         <div className="flex items-center justify-between p-4 border-b border-mc-border flex-shrink-0">
-          <h2 className="text-lg font-semibold">{task ? task.title : 'Create New Task'}</h2>
+          <div className="flex items-center gap-3">
+            <h2 className="text-lg font-semibold">{task ? task.title : 'Create New Task'}</h2>
+            {task?.dispatch_mode && (
+              <DispatchBadge mode={task.dispatch_mode} meta={dispatchMeta} />
+            )}
+          </div>
           <button onClick={onClose} className="p-1 hover:bg-mc-bg-tertiary rounded"><X className="w-5 h-5" /></button>
         </div>
 
@@ -191,24 +173,28 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
                 <input type="datetime-local" value={form.due_date} onChange={(e) => setForm({ ...form, due_date: e.target.value })}
                   className="w-full bg-mc-bg border border-mc-border rounded px-3 py-2 text-sm focus:outline-none focus:border-mc-accent" />
               </div>
+
+              {/* Dispatch Panel — embedded in overview form */}
+              {canDispatch && (
+                <DispatchPanel
+                  task={task!}
+                  onDispatch={() => setActiveTab('activity')}
+                />
+              )}
             </form>
           )}
           {activeTab === 'planning' && task && (
             <div className="flex flex-col items-center justify-center py-8 text-mc-text-secondary">
               <div className="text-4xl mb-2">📋</div>
               <p className="text-sm">Planning mode - AI Q&A flow coming soon</p>
-              <p className="text-xs mt-2">Connect to OpenClaw to enable AI planning</p>
+              <p className="text-xs mt-2">Use Dispatch Panel to send to Claude for planning</p>
             </div>
           )}
-          {activeTab === 'activity' && task && <ActivityLog taskId={task.id} />}
+          {activeTab === 'activity' && task && (
+            <ActivityLog taskId={task.id} autoRefresh={task.status === 'in_progress'} dispatchMeta={dispatchMeta} />
+          )}
           {activeTab === 'deliverables' && task && <DeliverablesList taskId={task.id} />}
         </div>
-
-        {dispatchMessage && (
-          <div className={`mx-4 mb-0 p-3 rounded text-sm ${dispatchMessage.startsWith('Error') ? 'bg-mc-accent-red/10 text-mc-accent-red' : 'bg-mc-accent/10 text-mc-accent'}`}>
-            {dispatchMessage}
-          </div>
-        )}
 
         {activeTab === 'overview' && (
           <div className="flex items-center justify-between p-4 border-t border-mc-border flex-shrink-0">
@@ -217,13 +203,6 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
                 <button type="button" onClick={handleDelete}
                   className="flex items-center gap-2 px-3 py-2 text-mc-accent-red hover:bg-mc-accent-red/10 rounded text-sm">
                   <Trash2 className="w-4 h-4" /> Delete
-                </button>
-              )}
-              {canDispatch && (
-                <button type="button" onClick={handleDispatch} disabled={isDispatching}
-                  className="flex items-center gap-2 px-3 py-2 bg-mc-accent-green/20 text-mc-accent-green hover:bg-mc-accent-green/30 rounded text-sm font-medium disabled:opacity-50 transition-colors">
-                  {isDispatching ? <Loader2 className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
-                  {isDispatching ? 'Dispatching...' : 'Dispatch to Claude'}
                 </button>
               )}
             </div>
@@ -243,5 +222,25 @@ export function TaskModal({ task, onClose, workspaceId }: TaskModalProps) {
           onAgentCreated={(agentId) => { setForm({ ...form, assigned_agent_id: agentId }); setShowAgentModal(false); }} />
       )}
     </div>
+  );
+}
+
+/** Badge showing dispatch mode (solo/team) on the task header */
+function DispatchBadge({ mode, meta }: { mode: string; meta: Record<string, unknown> | null }) {
+  if (mode === 'team') {
+    const teammateCount = Array.isArray(meta?.teammates) ? (meta.teammates as unknown[]).length : 0;
+    return (
+      <span className="flex items-center gap-1.5 text-[11px] px-2 py-1 bg-mc-accent-purple/15 text-mc-accent-purple border border-mc-accent-purple/30 rounded-full font-medium">
+        <Users className="w-3 h-3" />
+        Team ({1 + teammateCount})
+      </span>
+    );
+  }
+
+  return (
+    <span className="flex items-center gap-1.5 text-[11px] px-2 py-1 bg-mc-accent-green/15 text-mc-accent-green border border-mc-accent-green/30 rounded-full font-medium">
+      <Zap className="w-3 h-3" />
+      Solo
+    </span>
   );
 }
